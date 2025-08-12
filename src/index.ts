@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 import { GSuiteServer } from './tools/server.js';
 
 // Start server with proper shutdown handling

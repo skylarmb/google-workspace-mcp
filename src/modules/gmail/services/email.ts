@@ -1,4 +1,5 @@
-import { google, gmail_v1 } from 'googleapis';
+import { google, gmail_v1 } from "googleapis";
+import * as htmlToText from "html-to-text";
 import {
   EmailResponse,
   GetEmailsParams,
@@ -8,12 +9,12 @@ import {
   ThreadInfo,
   GmailError,
   IncomingGmailAttachment,
-  OutgoingGmailAttachment
-} from '../types.js';
-import { SearchService } from './search.js';
-import { GmailAttachmentService } from './attachment.js';
-import { AttachmentResponseTransformer } from '../../attachments/response-transformer.js';
-import { AttachmentIndexService } from '../../attachments/index-service.js';
+  OutgoingGmailAttachment,
+} from "../types.js";
+import { SearchService } from "./search.js";
+import { GmailAttachmentService } from "./attachment.js";
+import { AttachmentResponseTransformer } from "../../attachments/response-transformer.js";
+import { AttachmentIndexService } from "../../attachments/index-service.js";
 
 type GmailMessage = gmail_v1.Schema$Message;
 
@@ -23,9 +24,11 @@ export class EmailService {
   constructor(
     private searchService: SearchService,
     private attachmentService: GmailAttachmentService,
-    private gmailClient?: ReturnType<typeof google.gmail>
+    private gmailClient?: ReturnType<typeof google.gmail>,
   ) {
-    this.responseTransformer = new AttachmentResponseTransformer(AttachmentIndexService.getInstance());
+    this.responseTransformer = new AttachmentResponseTransformer(
+      AttachmentIndexService.getInstance(),
+    );
   }
 
   /**
@@ -39,9 +42,9 @@ export class EmailService {
   private ensureClient(): ReturnType<typeof google.gmail> {
     if (!this.gmailClient) {
       throw new GmailError(
-        'Gmail client not initialized',
-        'CLIENT_ERROR',
-        'Please ensure the service is initialized'
+        "Gmail client not initialized",
+        "CLIENT_ERROR",
+        "Please ensure the service is initialized",
       );
     }
     return this.gmailClient;
@@ -50,53 +53,65 @@ export class EmailService {
   /**
    * Extracts all headers into a key-value map
    */
-  private extractHeaders(headers: { name: string; value: string }[]): { [key: string]: string } {
-    return headers.reduce((acc, header) => {
-      acc[header.name] = header.value;
-      return acc;
-    }, {} as { [key: string]: string });
+  private extractHeaders(headers: { name: string; value: string }[]): {
+    [key: string]: string;
+  } {
+    return headers.reduce(
+      (acc, header) => {
+        acc[header.name] = header.value;
+        return acc;
+      },
+      {} as { [key: string]: string },
+    );
   }
 
   /**
    * Groups emails by thread ID and extracts thread information
    */
-  private groupEmailsByThread(emails: EmailResponse[]): { [threadId: string]: ThreadInfo } {
-    return emails.reduce((threads, email) => {
-      if (!threads[email.threadId]) {
-        threads[email.threadId] = {
-          messages: [],
-          participants: [],
-          subject: email.subject,
-          lastUpdated: email.date
-        };
-      }
+  private groupEmailsByThread(emails: EmailResponse[]): {
+    [threadId: string]: ThreadInfo;
+  } {
+    return emails.reduce(
+      (threads, email) => {
+        if (!threads[email.threadId]) {
+          threads[email.threadId] = {
+            messages: [],
+            participants: [],
+            subject: email.subject,
+            lastUpdated: email.date,
+          };
+        }
 
-      const thread = threads[email.threadId];
-      thread.messages.push(email.id);
-      
-      if (!thread.participants.includes(email.from)) {
-        thread.participants.push(email.from);
-      }
-      if (email.to && !thread.participants.includes(email.to)) {
-        thread.participants.push(email.to);
-      }
-      
-      const emailDate = new Date(email.date);
-      const threadDate = new Date(thread.lastUpdated);
-      if (emailDate > threadDate) {
-        thread.lastUpdated = email.date;
-      }
+        const thread = threads[email.threadId];
+        thread.messages.push(email.id);
 
-      return threads;
-    }, {} as { [threadId: string]: ThreadInfo });
+        if (!thread.participants.includes(email.from)) {
+          thread.participants.push(email.from);
+        }
+        if (email.to && !thread.participants.includes(email.to)) {
+          thread.participants.push(email.to);
+        }
+
+        const emailDate = new Date(email.date);
+        const threadDate = new Date(thread.lastUpdated);
+        if (emailDate > threadDate) {
+          thread.lastUpdated = email.date;
+        }
+
+        return threads;
+      },
+      {} as { [threadId: string]: ThreadInfo },
+    );
   }
 
   /**
    * Get attachment metadata from message parts
    */
-  private getAttachmentMetadata(message: GmailMessage): IncomingGmailAttachment[] {
+  private getAttachmentMetadata(
+    message: GmailMessage,
+  ): IncomingGmailAttachment[] {
     const attachments: IncomingGmailAttachment[] = [];
-    
+
     if (!message.payload?.parts) {
       return attachments;
     }
@@ -106,8 +121,8 @@ export class EmailService {
         attachments.push({
           id: part.body.attachmentId,
           name: part.filename,
-          mimeType: part.mimeType || 'application/octet-stream',
-          size: parseInt(String(part.body.size || '0'))
+          mimeType: part.mimeType || "application/octet-stream",
+          size: parseInt(String(part.body.size || "0")),
         });
       }
     }
@@ -115,31 +130,78 @@ export class EmailService {
     return attachments;
   }
 
+  private cleanupTextFromHell(text: string, maxLines: number = 100): string {
+    const cleaned = text
+      // First, handle escaped line breaks (literal \r\n, \n, \r strings)
+      .replace(/\\r\\n/g, "\n")
+      .replace(/\\n/g, "\n")
+      .replace(/\\r/g, "\n")
+      .replace(/\\t/g, "\t")
+
+      // Then handle actual line breaks and normalize them
+      .replace(/\r\n/g, "\n")
+      .replace(/\r/g, "\n")
+      .replace(/\f/g, "\n")
+      .replace(/\v/g, "\n")
+      .replace(/\u0085/g, "\n")
+      .replace(/\u2028/g, "\n")
+      .replace(/\u2029/g, "\n")
+
+      // Remove all the Unicode nightmare characters
+      .replace(
+        /[\u00A0\u1680\u2000-\u200F\u2028-\u202F\u205F\u3000\uFEFF]/g,
+        "",
+      )
+      .replace(/[\u200B-\u200F\u2060\uFEFF]/g, "")
+
+      // Clean up excessive whitespace
+      .replace(/\n{3,}/g, "\n\n") // Max 2 consecutive newlines (preserve paragraphs)
+      .replace(/[ \t]{2,}/g, " ") // Multiple spaces/tabs become single space
+      .replace(/\n[ \t]+/g, "\n") // Remove spaces/tabs after newlines
+      .replace(/[ \t]+\n/g, "\n") // Remove spaces/tabs before newlines
+
+      // Final trim
+      .trim();
+
+    // Handle line truncation
+    const lines = cleaned.split("\n");
+    if (lines.length > maxLines) {
+      return lines.slice(0, maxLines).join("\n") + "\n[TRUNCATED]";
+    }
+
+    return cleaned;
+  }
+
   /**
    * Enhanced getEmails method with support for advanced search criteria and options
    */
-  async getEmails({ email, search = {}, options = {}, messageIds }: GetEmailsParams): Promise<GetEmailsResponse> {
+  async getEmails({
+    email,
+    search = {},
+    options = {},
+    messageIds,
+  }: GetEmailsParams): Promise<GetEmailsResponse> {
     try {
       const maxResults = options.maxResults || 10;
-      
+
       let messages;
       let nextPageToken: string | undefined;
-      
+
       if (messageIds && messageIds.length > 0) {
-        messages = { messages: messageIds.map(id => ({ id })) };
+        messages = { messages: messageIds.map((id) => ({ id })) };
       } else {
         // Build search query from criteria
         const query = this.searchService.buildSearchQuery(search);
-        
+
         // List messages matching query
         const client = this.ensureClient();
         const { data } = await client.users.messages.list({
-          userId: 'me',
+          userId: "me",
           q: query,
           maxResults,
           pageToken: options.pageToken,
         });
-        
+
         messages = data;
         nextPageToken = data.nextPageToken || undefined;
       }
@@ -151,8 +213,8 @@ export class EmailService {
             total: 0,
             returned: 0,
             hasMore: false,
-            searchCriteria: search
-          }
+            searchCriteria: search,
+          },
         };
       }
 
@@ -161,38 +223,69 @@ export class EmailService {
         messages.messages.map(async (message) => {
           const client = this.ensureClient();
           const { data: email } = await client.users.messages.get({
-            userId: 'me',
+            userId: "me",
             id: message.id!,
-            format: options.format || 'full',
+            format: options.format || "full",
           });
 
-          const headers = (email.payload?.headers || []).map(h => ({
-            name: h.name || '',
-            value: h.value || ''
+          const headers = (email.payload?.headers || []).map((h) => ({
+            name: h.name || "",
+            value: h.value || "",
           }));
-          const subject = headers.find(h => h.name === 'Subject')?.value || '';
-          const from = headers.find(h => h.name === 'From')?.value || '';
-          const to = headers.find(h => h.name === 'To')?.value || '';
-          const date = headers.find(h => h.name === 'Date')?.value || '';
+          const subject =
+            headers.find((h) => h.name === "Subject")?.value || "";
+          const from = headers.find((h) => h.name === "From")?.value || "";
+          const to = headers.find((h) => h.name === "To")?.value || "";
+          const date = headers.find((h) => h.name === "Date")?.value || "";
 
           // Get email body
-          let body = '';
+          let body = "";
           if (email.payload?.body?.data) {
-            body = Buffer.from(email.payload.body.data, 'base64').toString();
+            const bodyRaw = Buffer.from(
+              email.payload.body.data,
+              "base64",
+            ).toString();
+            const bodyText = htmlToText.convert(bodyRaw, {
+              formatters: {
+                nullFormatter: function () {},
+              },
+              selectors: [
+                {
+                  selector: "a",
+                  format: "skip",
+                },
+                {
+                  selector: "img",
+                  format: "skip",
+                },
+              ],
+            });
+            const textCleaned = this.cleanupTextFromHell(bodyText);
+            body = textCleaned;
           } else if (email.payload?.parts) {
-            const textPart = email.payload.parts.find(part => part.mimeType === 'text/plain');
+            const textPart = email.payload.parts.find(
+              (part) => part.mimeType === "text/plain",
+            );
             if (textPart?.body?.data) {
-              body = Buffer.from(textPart.body.data, 'base64').toString();
+              const textRaw = Buffer.from(
+                textPart.body.data,
+                "base64",
+              ).toString();
+              const cleaned = this.cleanupTextFromHell(textRaw);
+              body = cleaned;
             }
           }
 
           // Get attachment metadata if present and store in index
-          const hasAttachments = email.payload?.parts?.some(part => part.filename && part.filename.length > 0) || false;
+          const hasAttachments =
+            email.payload?.parts?.some(
+              (part) => part.filename && part.filename.length > 0,
+            ) || false;
           let attachments;
           if (hasAttachments) {
             attachments = this.getAttachmentMetadata(email);
             // Store each attachment's metadata in the index
-            attachments.forEach(attachment => {
+            attachments.forEach((attachment) => {
               this.attachmentService.addAttachment(email.id!, attachment);
             });
           }
@@ -206,26 +299,31 @@ export class EmailService {
             from,
             to,
             date,
+            // TODO: Maybe even remove the body here, the snippet is enough??
             body,
-            headers: options.includeHeaders ? this.extractHeaders(headers) : undefined,
-            isUnread: email.labelIds?.includes('UNREAD') || false,
+            headers: options.includeHeaders
+              ? this.extractHeaders(headers)
+              : undefined,
+            isUnread: email.labelIds?.includes("UNREAD") || false,
             hasAttachment: hasAttachments,
-            attachments
+            attachments,
           };
 
           return response;
-        })
+        }),
       );
 
       // Handle threaded view if requested
-      const threads = options.threadedView ? this.groupEmailsByThread(emails) : undefined;
+      const threads = options.threadedView
+        ? this.groupEmailsByThread(emails)
+        : undefined;
 
       // Sort emails if requested
       if (options.sortOrder) {
         emails.sort((a, b) => {
           const dateA = new Date(a.date).getTime();
           const dateB = new Date(b.date).getTime();
-          return options.sortOrder === 'asc' ? dateA - dateB : dateB - dateA;
+          return options.sortOrder === "asc" ? dateA - dateB : dateB - dateA;
         });
       }
 
@@ -237,9 +335,9 @@ export class EmailService {
           total: messages.resultSizeEstimate || emails.length,
           returned: emails.length,
           hasMore: Boolean(nextPageToken),
-          searchCriteria: search
+          searchCriteria: search,
         },
-        threads
+        threads,
       });
 
       return transformedResponse;
@@ -248,42 +346,51 @@ export class EmailService {
         throw error;
       }
       throw new GmailError(
-        'Failed to get emails',
-        'FETCH_ERROR',
-        `Error: ${error instanceof Error ? error.message : 'Unknown error'}`
+        "Failed to get emails",
+        "FETCH_ERROR",
+        `Error: ${error instanceof Error ? error.message : "Unknown error"}`,
       );
     }
   }
 
-  async sendEmail({ email, to, subject, body, cc = [], bcc = [], attachments = [] }: SendEmailParams): Promise<SendEmailResponse> {
+  async sendEmail({
+    email,
+    to,
+    subject,
+    body,
+    cc = [],
+    bcc = [],
+    attachments = [],
+  }: SendEmailParams): Promise<SendEmailResponse> {
     try {
       // Validate and prepare attachments for sending
-      const processedAttachments = attachments?.map(attachment => {
-        this.attachmentService.validateAttachment(attachment);
-        const prepared = this.attachmentService.prepareAttachment(attachment);
-        return {
-          id: attachment.id,
-          name: prepared.filename,
-          mimeType: prepared.mimeType,
-          size: attachment.size,
-          content: prepared.content
-        } as OutgoingGmailAttachment;
-      }) || [];
+      const processedAttachments =
+        attachments?.map((attachment) => {
+          this.attachmentService.validateAttachment(attachment);
+          const prepared = this.attachmentService.prepareAttachment(attachment);
+          return {
+            id: attachment.id,
+            name: prepared.filename,
+            mimeType: prepared.mimeType,
+            size: attachment.size,
+            content: prepared.content,
+          } as OutgoingGmailAttachment;
+        }) || [];
 
       // Construct email with attachments
       const boundary = `boundary_${Date.now()}`;
       const messageParts = [
-        'MIME-Version: 1.0\n',
+        "MIME-Version: 1.0\n",
         `Content-Type: multipart/mixed; boundary="${boundary}"\n`,
-        `To: ${to.join(', ')}\n`,
-        cc.length > 0 ? `Cc: ${cc.join(', ')}\n` : '',
-        bcc.length > 0 ? `Bcc: ${bcc.join(', ')}\n` : '',
+        `To: ${to.join(", ")}\n`,
+        cc.length > 0 ? `Cc: ${cc.join(", ")}\n` : "",
+        bcc.length > 0 ? `Bcc: ${bcc.join(", ")}\n` : "",
         `Subject: ${subject}\n\n`,
         `--${boundary}\n`,
         'Content-Type: text/plain; charset="UTF-8"\n',
-        'Content-Transfer-Encoding: 7bit\n\n',
+        "Content-Transfer-Encoding: 7bit\n\n",
         body,
-        '\n'
+        "\n",
       ];
 
       // Add attachments directly from content
@@ -291,27 +398,27 @@ export class EmailService {
         messageParts.push(
           `--${boundary}\n`,
           `Content-Type: ${attachment.mimeType}\n`,
-          'Content-Transfer-Encoding: base64\n',
+          "Content-Transfer-Encoding: base64\n",
           `Content-Disposition: attachment; filename="${attachment.name}"\n\n`,
           attachment.content,
-          '\n'
+          "\n",
         );
       }
 
       messageParts.push(`--${boundary}--`);
-      const fullMessage = messageParts.join('');
+      const fullMessage = messageParts.join("");
 
       // Encode the email in base64
       const encodedMessage = Buffer.from(fullMessage)
-        .toString('base64')
-        .replace(/\+/g, '-')
-        .replace(/\//g, '_')
-        .replace(/=+$/, '');
+        .toString("base64")
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/, "");
 
       // Send the email
       const client = this.ensureClient();
       const { data } = await client.users.messages.send({
-        userId: 'me',
+        userId: "me",
         requestBody: {
           raw: encodedMessage,
         },
@@ -320,7 +427,7 @@ export class EmailService {
       const response: SendEmailResponse = {
         messageId: data.id!,
         threadId: data.threadId!,
-        labelIds: data.labelIds || undefined
+        labelIds: data.labelIds || undefined,
       };
 
       if (processedAttachments.length > 0) {
@@ -333,9 +440,9 @@ export class EmailService {
         throw error;
       }
       throw new GmailError(
-        'Failed to send email',
-        'SEND_ERROR',
-        `Error: ${error instanceof Error ? error.message : 'Unknown error'}`
+        "Failed to send email",
+        "SEND_ERROR",
+        `Error: ${error instanceof Error ? error.message : "Unknown error"}`,
       );
     }
   }
